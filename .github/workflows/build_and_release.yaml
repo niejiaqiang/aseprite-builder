@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
 env:
   BUILD_TYPE: Release
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   fetch-aseprite-info:
@@ -38,7 +41,6 @@ jobs:
       mac-asset-exists: ${{ steps.check-assets.outputs.mac-asset-exists }}
       windows-asset-exists: ${{ steps.check-assets.outputs.windows-asset-exists }}
     steps:
-      - uses: actions/checkout@v2
       - uses: ncipollo/release-action@v1
         with:
           tag: ${{ needs.fetch-aseprite-info.outputs.release-tag }}
@@ -83,21 +85,25 @@ jobs:
           os: [ windows-latest, macOS-latest ]
         fail-fast: false
     steps:
-      - name: Install Dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
-            libfontconfig1-dev
-      - uses: actions/checkout@v4
       - name: Install Aseprite
         shell: bash
         run: |
-          git clone --recurse-submodules -j8 https://github.com/aseprite/aseprite --branch ${{ needs.create-release.outputs.release-tag }}
+          git clone \
+            --depth 1 \
+            --single-branch \
+            --branch ${{ needs.create-release.outputs.release-tag }} \
+            --recurse-submodules \
+            --shallow-submodules \
+            -j8 \
+            https://github.com/aseprite/aseprite
+      - name: Cache Skia
+        id: cache-skia
+        uses: actions/cache@v4
+        with:
+          path: aseprite/skia
+          key: skia-m124-08a5439a6b-${{ runner.os }}-${{ runner.arch }}
       - name: Install Skia
+        if: steps.cache-skia.outputs.cache-hit != 'true'
         working-directory: aseprite
         shell: bash
         run: |
