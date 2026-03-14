@@ -165,13 +165,27 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: aseprite/build/bin
         shell: bash
-        run: find . -mindepth 1 ! \( -name 'aseprite.app' -o -name 'aseprite' -o -name 'data' -prune \) -exec rm -rf {} +
+        run: echo "Skip cleanup on macOS to avoid removing app bundle contents."
       - name: Make portable zip
         working-directory: aseprite/build/bin
         run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
       - name: Create release
         working-directory: aseprite/build/bin
-        run: 7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip *
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            if [[ -d aseprite.app ]]; then
+              7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip aseprite.app aseprite.ini
+            elif [[ -f aseprite ]]; then
+              7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip aseprite aseprite.ini data
+            else
+              echo "No macOS Aseprite bundle/binary found in aseprite/build/bin"
+              ls -la
+              exit 1
+            fi
+          else
+            7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip *
+          fi
       - name: Upload release
         uses: svenstaro/upload-release-action@v2
         with:
