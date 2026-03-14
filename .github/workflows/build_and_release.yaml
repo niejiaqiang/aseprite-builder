@@ -76,16 +76,27 @@ jobs:
     needs: create-release
     permissions:
       contents: write
-    if: |
-      (matrix.os != 'macOS-latest' || needs.create-release.outputs.mac-asset-exists != 'true') &&
-      (matrix.os != 'windows-latest' || needs.create-release.outputs.windows-asset-exists != 'true')
     runs-on: ${{ matrix.os }}
     strategy:
         matrix:
           os: [ windows-latest, macOS-latest ]
         fail-fast: false
     steps:
+      - name: Decide whether this platform needs build
+        id: should-build
+        shell: bash
+        run: |
+          build=true
+          if [[ "${{ runner.os }}" == "macOS" && "${{ needs.create-release.outputs.mac-asset-exists }}" == "true" ]]; then
+            build=false
+          fi
+          if [[ "${{ runner.os }}" == "Windows" && "${{ needs.create-release.outputs.windows-asset-exists }}" == "true" ]]; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "runner.os=${{ runner.os }}, build=$build"
       - name: Install Aseprite
+        if: steps.should-build.outputs.build == 'true'
         shell: bash
         run: |
           git clone \
@@ -97,13 +108,14 @@ jobs:
             -j8 \
             https://github.com/aseprite/aseprite
       - name: Cache Skia
+        if: steps.should-build.outputs.build == 'true'
         id: cache-skia
         uses: actions/cache@v4
         with:
           path: aseprite/skia
           key: skia-m124-08a5439a6b-${{ runner.os }}-${{ runner.arch }}
       - name: Install Skia
-        if: steps.cache-skia.outputs.cache-hit != 'true'
+        if: steps.should-build.outputs.build == 'true' && steps.cache-skia.outputs.cache-hit != 'true'
         working-directory: aseprite
         shell: bash
         run: |
@@ -124,9 +136,11 @@ jobs:
             unzip Skia-Linux-Release-x64.zip -d skia
           fi
       - uses: aseprite/get-ninja@main
+        if: steps.should-build.outputs.build == 'true'
       - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
+        if: steps.should-build.outputs.build == 'true' && runner.os == 'Windows'
       - name: Generating Makefiles
+        if: steps.should-build.outputs.build == 'true'
         shell: bash
         working-directory: aseprite
         run: |
@@ -158,24 +172,27 @@ jobs:
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
       - name: Compiling
+        if: steps.should-build.outputs.build == 'true'
         shell: bash
         working-directory: aseprite
         run: |
           cd build && ninja
       - name: Clean Up Build folder (Windows)
-        if: runner.os == 'Windows'
+        if: steps.should-build.outputs.build == 'true' && runner.os == 'Windows'
         working-directory: aseprite/build/bin
         shell: bash
         run: find . -mindepth 1 ! \( -name 'aseprite' -o -name 'aseprite.exe' -o -name 'data' -prune \) -exec rm -rf {} +
       - name: Clean Up Build folder (macOS)
-        if: runner.os == 'macOS'
+        if: steps.should-build.outputs.build == 'true' && runner.os == 'macOS'
         working-directory: aseprite/build/bin
         shell: bash
         run: echo "Skip cleanup on macOS to avoid removing app bundle contents."
       - name: Make portable zip
+        if: steps.should-build.outputs.build == 'true'
         working-directory: aseprite/build/bin
         run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
       - name: Create release
+        if: steps.should-build.outputs.build == 'true'
         working-directory: aseprite/build/bin
         shell: bash
         run: |
@@ -193,6 +210,7 @@ jobs:
             7z -tzip a Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip *
           fi
       - name: Upload release
+        if: steps.should-build.outputs.build == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
