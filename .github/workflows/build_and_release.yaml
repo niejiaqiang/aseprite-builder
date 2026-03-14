@@ -35,6 +35,8 @@ jobs:
     outputs:
       download-link: ${{ needs.fetch-aseprite-info.outputs.download-link }}
       release-tag: ${{ needs.fetch-aseprite-info.outputs.release-tag }}
+      mac-asset-exists: ${{ steps.check-assets.outputs.mac-asset-exists }}
+      windows-asset-exists: ${{ steps.check-assets.outputs.windows-asset-exists }}
     steps:
       - uses: actions/checkout@v2
       - uses: ncipollo/release-action@v1
@@ -43,16 +45,42 @@ jobs:
           body: Aseprite-${{ needs.fetch-aseprite-info.outputs.release-tag }}
           skipIfReleaseExists: true
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check existing release assets
+        id: check-assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ needs.fetch-aseprite-info.outputs.release-tag }}"
+          assets=$(gh release view "$tag" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' || true)
+
+          mac_asset="Aseprite-${tag}-macOS.zip"
+          windows_asset="Aseprite-${tag}-Windows.zip"
+
+          if echo "$assets" | grep -Fxq "$mac_asset"; then
+            echo "mac-asset-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mac-asset-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if echo "$assets" | grep -Fxq "$windows_asset"; then
+            echo "windows-asset-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "windows-asset-exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build-aseprite:
     name: Build Aseprite
     needs: create-release
     permissions:
       contents: write
+    if: |
+      (matrix.os != 'macOS-latest' || needs.create-release.outputs.mac-asset-exists != 'true') &&
+      (matrix.os != 'windows-latest' || needs.create-release.outputs.windows-asset-exists != 'true')
     runs-on: ${{ matrix.os }}
     strategy:
         matrix:
-          os: [ windows-latest, ubuntu-latest, macOS-latest ]
+          os: [ windows-latest, macOS-latest ]
         fail-fast: false
     steps:
       - name: Install Dependencies
@@ -128,10 +156,16 @@ jobs:
         working-directory: aseprite
         run: |
           cd build && ninja
-      - name: Clean Up Build folder
+      - name: Clean Up Build folder (Windows)
+        if: runner.os == 'Windows'
         working-directory: aseprite/build/bin
         shell: bash
         run: find . -mindepth 1 ! \( -name 'aseprite' -o -name 'aseprite.exe' -o -name 'data' -prune \) -exec rm -rf {} +
+      - name: Clean Up Build folder (macOS)
+        if: runner.os == 'macOS'
+        working-directory: aseprite/build/bin
+        shell: bash
+        run: find . -mindepth 1 ! \( -name 'aseprite.app' -o -name 'aseprite' -o -name 'data' -prune \) -exec rm -rf {} +
       - name: Make portable zip
         working-directory: aseprite/build/bin
         run: echo '# This file is here so Aseprite behaves as a portable program' > aseprite.ini
@@ -145,3 +179,4 @@ jobs:
           file: aseprite/build/bin/Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip
           asset_name: Aseprite-${{ needs.create-release.outputs.release-tag }}-${{ runner.os }}.zip
           tag: ${{ needs.create-release.outputs.release-tag }}
+          overwrite: true
